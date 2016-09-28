@@ -1,0 +1,304 @@
+---
+title: "Iris Classification"
+author: "Mark Pratley"
+date: "3 November 2015"
+output: 
+  html_document:
+    code_folding: hide
+    self_contained: no
+---
+
+```{r libs, echo=FALSE, include=FALSE}
+library(plyr)
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(e1071)
+library(klaR)
+library(knitr)
+library(GGally)
+source("https://raw.githubusercontent.com/bhklab/predictionet/master/R/mcc.R")
+library(servr)
+library(plotly)
+
+set.seed(12345)
+```
+
+```{r Cache, include=FALSE, cache=FALSE}
+CACHE <- F
+```
+
+This is a quick exploration of simple classification using [caret](http://topepo.github.io/caret/index.html) with Edgar Anderson's famous [Iris data set](http://archive.ics.uci.edu/ml/datasets/Iris).
+
+The goal of the project is to utilise caret alongside a variety of machine learning algorithms to correctly classify irises into their species group whilst casually comparing the different algorithms.
+
+### The Data
+
+Anderson's Iris data set gives the measurements in centimeters of the 4 predictors, as well as the Species:
+
+* Sepal Length
+* Sepal Width
+* Petal Length
+* Petal Width
+* Species
+    * *iris setosa*
+    * *iris versicolor* 
+    * *iris virginica*
+
+```{r summary, warning=FALSE, cache = CACHE}
+summary(iris)
+```
+
+The iris data set was chosen partly as it requires no pre-processing or transformation, which is ideal for quickly looking at caret and classification, and also partly because it is a classic classification data set.
+
+### Pairwise Correlation Matrix
+
+First we will create a Pairwise Correlation Matrix to explore the variables and look for any relationships.
+
+```{r corr, warning=FALSE, message=FALSE,cache = CACHE}
+ggpairs(iris, aes(colour=Species, alpha=0.4),
+        title = "Anderson's Iris Data -- 3 species")
+```
+
+These pairwise scatterplots show that there is strong correlation between Petal.Length and Petal.Width. And also correlation between Sepal.Length and Petal.Length, and also Sepal.Length with Petal.Width.
+
+We can also see a degree of separation between *iris setosa* and the other Irises, but there is no clear separation between *iris versicolor* and *iris virginica*
+
+### Comparing Sepal.Length and Sepal.Width
+
+```{r sep-compare, warning=FALSE, cache = CACHE}
+ggplot(iris, aes(x=Sepal.Length, y=Sepal.Width, colour=Species)) + 
+    geom_point() +
+    ggtitle("Sepal.Length vs Sepal.Width")
+```
+
+Comparing Sepal.Width and Sepal.Length whilst colouring according to species shows good separation between *iris setosa* and the other iris species, but again only minor difference between *iris versicolor* and *iris virginica.*
+
+
+### Comparing Petal.Length and Petal.Width
+
+```{r pet-compare, warning=FALSE, cache = CACHE}
+ggplot(iris, aes(x=Petal.Width, y=Petal.Length, colour=Species)) + 
+    geom_point() +
+    ggtitle("Petal.Length vs Petal.Width")
+```
+
+From this graph, looking at the Petal.Width vs Petal.Length and colouring according to species, we can see both strong correlation and also pretty good separation betwen the 3 species, except for a few uncertain points between the blue/green groups.
+
+
+## Models
+
+We'll build some models and use them to classify species.
+
+```{r df-setup, warning=FALSE, echo=FALSE, cache = FALSE}
+# Setup a comparison df
+results <- data.frame(Name=character(),
+                         MCC=numeric(), 
+                         stringsAsFactors=FALSE) 
+```
+
+### Test/Training Data
+
+First we need to split our data set in test and training sets.
+
+The function createDataPartition can be used to create a [stratified random sample](http://stattrek.com/statistics/dictionary.aspx?definition=stratified_sampling) of the data.
+
+```{r tt-split, warning=FALSE, cache = CACHE}
+inTrainingSet <- createDataPartition(iris$Species, p = .50, list = FALSE)
+irisTrain <- iris[ inTrainingSet,]
+irisTest  <- iris[ -inTrainingSet,]
+```
+
+### [Random Forest](https://en.wikipedia.org/wiki/Random_forest)
+
+We now can use caret with a standard random forest method to create a model for clasifying iris species.
+
+```{r rf-train, warning=FALSE, cache = CACHE, message=FALSE}
+m.rf <- train( Species ~ ., data=irisTrain, method="rf" )
+```
+
+Let's check our model by using it on the unseen test data to predict the species based on the other variables.
+
+```{r rf-predict, warning=FALSE, cache = CACHE}
+pred.rf <- predict(m.rf, irisTest)
+
+```
+
+Now we can view a [confusion matrix](https://en.wikipedia.org/wiki/Confusion_matrix) to see how well our random forest classified the data.
+
+```{r rf-cm, warning=FALSE, cache = CACHE}
+cm.rf <- confusionMatrix(pred.rf, irisTest$Species)
+kable(cm.rf$table)
+```
+
+This is pretty good, classifying all 25/25 of the *iris setosa* data correctly, only misclassifying 1/25 *iris versicolor* as *iris virginica*, and misclassifying 1/25 *iris virginica* as *iris versicolor*
+
+```{r rf-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[1, ][1] <- c("Random Forest")
+results[nrow(results),][2] <- mcc(cm.rf$table)
+```
+
+### [C5.0](https://en.wikipedia.org/wiki/C4.5_algorithm)
+
+Now we will try classifying with the C5.0 algorithm.
+
+```{r c5, warning=FALSE, cache = CACHE, message=FALSE}
+m.C50 <- train(Species ~ ., data=irisTrain, method="C5.0" )
+
+pred.C50 <- predict(m.C50, irisTest)
+cm.C50 <- confusionMatrix(pred.C50, irisTest$Species)
+kable(cm.C50$table)
+```
+```{r c5-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("C5.0")
+results[nrow(results),][2] <- mcc(cm.C50$table)
+```
+
+### [Naive Bayes](https://en.wikipedia.org/wiki/Naive_Bayes_classifier)
+
+```{r nb-train, warning=FALSE, cache = CACHE, message=FALSE}
+
+m.nb <- train(Species~., data=irisTrain, method="nb")
+
+pred.nb <- predict(m.nb, irisTest)
+cm.nb <- confusionMatrix(pred.nb, irisTest$Species)
+kable(cm.nb$table)
+```
+```{r nb-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("Naive Bayes")
+results[nrow(results),][2] <- mcc(cm.nb$table)
+```
+
+### Naive Bayes with [k-fold Cross Validation](http://en.wikipedia.org/wiki/Cross-validation_(statistics\))
+
+We will now add k-fold (in this case 10-fold) cross validation to create our naive bayes model.
+
+```{r nb_kfcv, warning=FALSE, cache = CACHE, message=FALSE}
+
+train_control <- trainControl(method="cv", number=10)
+
+m.nbkf <- train(Species~., data=irisTrain, trControl=train_control, method="nb")
+
+pred.nbkf <- predict(m.nbkf, irisTest)
+cm.nbkf <- confusionMatrix(pred.nbkf, irisTest$Species)
+kable(cm.nbkf$table)
+```
+```{r nb_kfcv-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("Naive Bayes k-fold")
+results[nrow(results),][2] <- mcc(cm.nbkf$table)
+```
+
+### [k-nearest neighbours](https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm)
+
+```{r knn, warning=FALSE, cache = CACHE, message=FALSE}
+m.knn <- train(Species~., data=irisTrain, method="knn")
+
+pred.knn <- predict(m.knn, irisTest)
+cm.knn <- confusionMatrix(pred.knn, irisTest$Species)
+kable(cm.knn$table)
+```
+```{r knn-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("KNN")
+results[nrow(results),][2] <- mcc(cm.knn$table)
+```
+
+### [Neural Network](https://en.wikipedia.org/wiki/Artificial_neural_network)
+
+```{r nn, warning=FALSE, cache = CACHE, message=FALSE}
+m.nnet <- train(Species~.,data=irisTrain,method="nnet", trace=FALSE)
+
+pred.nnet <- predict(m.nnet, irisTest)
+cm.nnet <- confusionMatrix(pred.nnet, irisTest$Species)
+kable(cm.nnet$table)
+```
+```{r nn-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("Neural Net")
+results[nrow(results),][2] <- mcc(cm.nnet$table)
+```
+
+### Neural Network with [Bootstrapping](https://www.wikiwand.com/en/Bootstrapping_(statistics\))
+
+```{r nn_bs, warning=FALSE, cache = CACHE, message=FALSE}
+tc <- trainControl(method="boot",number=25)
+
+m.nnet.bs <- train(Species~.,data=irisTrain,method="nnet",trControl=tc, trace=FALSE)
+
+pred.nnet.bs <- predict(m.nnet.bs, irisTest)
+cm.nnet.bs <- confusionMatrix(pred.nnet.bs, irisTest$Species)
+kable(cm.nnet.bs$table)
+```
+```{r nn_bs-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("Neural Net w Boot")
+results[nrow(results),][2] <- mcc(cm.nnet.bs$table)
+```
+
+### Random Forest with [Leave One Out Cross Validation](https://www.wikiwand.com/en/Bootstrapping_(statistics\))
+
+```{r rfloocv, warning=FALSE, cache = CACHE, message=FALSE}
+tc <- trainControl(method="LOOCV", number=25)
+
+m.rf.bs <- train(Species~.,data=irisTrain,method="rf",trControl=tc, trace=FALSE)
+
+pred.rf.bs <- predict(m.rf.bs, irisTest)
+cm.rf.bs <- confusionMatrix(pred.rf.bs, irisTest$Species)
+kable(cm.rf.bs$table)
+```
+```{r rfloocv-mcc, warning=FALSE, echo=FALSE, cache = F}
+results[nrow(results) + 1, ][1] <- c("Random Forest w LOOCV")
+results[nrow(results),][2] <- mcc(cm.rf.bs$table)
+```
+
+### Elastic Net [glmnet](https://cran.r-project.org/web/packages/glmnet/vignettes/glmnet_beta.html)
+
+```{r glmnet, warning=FALSE, cache = T, message=FALSE}
+m.glmnet <- train(Species~., 
+                  data=irisTrain, 
+                  method="AdaBoost.M1")
+
+pred.glmnet <- predict(m.glmnet, irisTest)
+cm.glmnet <- confusionMatrix(pred.glmnet, irisTest$Species)
+kable(cm.glmnet$table)
+```
+```{r glmnet-mcc, warning=FALSE, echo=FALSE, cache = F}
+results[nrow(results) + 1, ][1] <- c("Elastic Net")
+results[nrow(results),][2] <- mcc(cm.glmnet$table)
+```
+
+### Using Pre-Processing (including [PCA](https://www.wikiwand.com/en/Principal_component_analysis)) with Neural Net
+
+```{r nnet-pca, warning=FALSE, cache = CACHE, message=FALSE}
+m.nnet.pp <- train(Species~.,
+                data=irisTrain,
+                method="nnet",
+                preProcess=c("BoxCox", "center", "scale", "pca"),
+                trace=FALSE)
+
+pred.nnet.pp <- predict(m.nnet.pp, irisTest)
+cm.nnet.pp <- confusionMatrix(pred.nnet.pp, irisTest$Species)
+kable(cm.nnet.pp$table)
+```
+```{r nnet-pca-mcc, warning=FALSE, echo=FALSE, cache = CACHE}
+results[nrow(results) + 1, ][1] <- c("Neural Net PP")
+results[nrow(results),][2] <- mcc(cm.nnet.pp$table)
+```
+
+## Results
+
+Having used a variety of different models to classify the iris data set, we can now attempt to compare their performance.
+Comparing confusion matrices isn't entirelty straight-forward as models perform differently in different areas, some optimising for specificity, some for sensitivity, or for some other metric.
+I have chosen to use [Matthews Correlation Coefficient](https://en.wikipedia.org/wiki/Matthews_correlation_coefficient) which gives a single number in the range -1 to +1, and is a correlation coefficient between the observed and predicted binary classifications.
+
+```{r results, warning=FALSE, cache = F}
+results <- results %>% arrange(desc(MCC))
+kable(results)
+
+ggplot(results, aes(x=Name, y=MCC, fill=Name)) + 
+    geom_bar(stat="identity") +
+    ggtitle("Comparison of Classification Methods") + 
+    theme(axis.text.x=element_blank(),
+      axis.title.x=element_blank())
+```
+
+From the table and graph it is possible to see that all the models performed similarly, in the range 0.88 - 0.98. But the Neural Network performed the best MCC=0.98, followed by KNN with MCC=0.96.
+
+Another point of interest is that the worst model was also the neural network, but with pre-processed data using BoxCox, centering, scaling and PCA which implies that innapropriate pre-processing can be worse than none.
